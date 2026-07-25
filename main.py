@@ -38,15 +38,19 @@ def fetch_shipment(context, ref):
         shipment_completed.append(texts[2])
         order_completed.append(texts[3])
 
-    for i in sorted([i for i, val in enumerate(order_completed) if val == "PayPal"], reverse=True):
+    for i in sorted(
+        [i for i, val in enumerate(order_completed) if val == "PayPal"], reverse=True
+    ):
         del paid_on[i]
         del shipment_completed[i]
         del order_completed[i]
         del ref[i]
-    
-    paid_on_dt = [datetime.strptime(d, "%b %d, %Y") for d in paid_on]                        # noqa: DTZ007
-    shipment_completed_dt = [datetime.strptime(d, "%b %d, %Y") for d in shipment_completed]  # noqa: DTZ007
-    order_completed_dt = [datetime.strptime(d, "%b %d, %Y") for d in order_completed]        # noqa: DTZ007
+
+    paid_on_dt = [datetime.strptime(d, "%b %d, %Y") for d in paid_on]  # noqa: DTZ007
+    shipment_completed_dt = [
+        datetime.strptime(d, "%b %d, %Y") for d in shipment_completed
+    ]  # noqa: DTZ007
+    order_completed_dt = [datetime.strptime(d, "%b %d, %Y") for d in order_completed]  # noqa: DTZ007
 
     combined = list(zip(paid_on_dt, shipment_completed_dt, order_completed_dt))
     seen = set()
@@ -55,14 +59,13 @@ def fetch_shipment(context, ref):
         if triple not in seen:
             seen.add(triple)
             keep_indices.append(i)
-    
+
     paid_on_dt = [paid_on_dt[i] for i in keep_indices]
     shipment_completed_dt = [shipment_completed_dt[i] for i in keep_indices]
     order_completed_dt = [order_completed_dt[i] for i in keep_indices]
 
     days_paid_to_shipment = [
-        (ship - paid).days
-        for paid, ship in zip(paid_on_dt, shipment_completed_dt)
+        (ship - paid).days for paid, ship in zip(paid_on_dt, shipment_completed_dt)
     ]
     days_shipment_to_arrival = [
         (order - ship).days
@@ -80,10 +83,10 @@ def parse_shippments(browser, context):
         page.get_by_role("button", name="View orders").click()
         time.sleep(random.uniform(0.5, 1))
 
-    status = [] # Status
-    date = [] # Date
-    price = [] # Price
-    ref = [] # Ref. Numbers
+    status = []  # Status
+    date = []  # Date
+    price = []  # Price
+    ref = []  # Ref. Numbers
 
     outer_container = page.locator(".comet-checkbox-group")
     cards = outer_container.locator("> div")
@@ -113,7 +116,7 @@ def parse_shippments(browser, context):
             date.append(div_4a.inner_text())
             div_4b = div_4_children.nth(1)
             ref.append(div_4b.inner_text())
-        
+
         third_div = child_divs.nth(2)
         inner_div_of_third = third_div.locator("> div").nth(1)
         div_3_children = inner_div_of_third.locator("> div")
@@ -123,7 +126,7 @@ def parse_shippments(browser, context):
             span_3a = div_3a.locator("span").first
             if span_3a.count() > 0:
                 price.append(span_3a.inner_text())
-                
+
     if not status or not date or not price or not ref:
         print("No Items could be fetched")
         context.close()
@@ -136,7 +139,9 @@ def parse_shippments(browser, context):
         browser.close()
         sys.exit()
 
-    for i in sorted([i for i, val in enumerate(status) if val != "Completed"], reverse=True):
+    for i in sorted(
+        [i for i, val in enumerate(status) if val != "Completed"], reverse=True
+    ):
         del status[i]
         del date[i]
         del price[i]
@@ -149,7 +154,7 @@ def parse_shippments(browser, context):
         return None
 
     def clean_ref_number(s):
-        match = re.search(r'\d+', s)
+        match = re.search(r"\d+", s)
         if match:
             return match.group()
         return None
@@ -157,7 +162,9 @@ def parse_shippments(browser, context):
     clean_price = [clean_price_list(x) for x in price]
     clean_ref = [clean_ref_number(x) for x in ref]
 
-    for i in sorted([i for i, val in enumerate(clean_price) if val == 0.01], reverse=True):
+    for i in sorted(
+        [i for i, val in enumerate(clean_price) if val == 0.01], reverse=True
+    ):
         del status[i]
         del date[i]
         del clean_price[i]
@@ -191,15 +198,18 @@ def parse_shippments(browser, context):
     min_time = min(total_days)
     max_time = max(total_days)
 
-    print(f"Max Delivery Time: {max_time} days, Min Delivery Time: {min_time} days, Avg Delivery Time: {avg_time} days")
+    print(
+        f"Max Delivery Time: {max_time} days, Min Delivery Time: {min_time} days, Avg Delivery Time: {avg_time} days"
+    )
 
     print("Finished!")
-    
+
     context.close()
     browser.close()
 
+
 if os.path.isfile("cookie.json"):
-     with sync_playwright() as p:
+    with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(storage_state="cookie.json")
         parse_shippments(browser, context)
@@ -221,7 +231,7 @@ else:
 
         save = input("Please log in manually and then press y to continue: ")
 
-        if save.lower() == 'y':
+        if save.lower() == "y":
             # Save cookies to a file
             context.storage_state(path="cookie.json")
 
