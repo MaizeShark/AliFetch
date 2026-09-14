@@ -1,3 +1,4 @@
+import argparse
 import os
 import random
 import re
@@ -5,6 +6,7 @@ import sys
 import time
 from datetime import datetime
 
+from alive_progress import alive_bar
 from playwright.sync_api import sync_playwright
 
 from Net2JSON import Netscape2json
@@ -15,28 +17,30 @@ def fetch_shipment(context, ref):
     paid_on = []
     shipment_completed = []
     order_completed = []
-    for i in ref:
-        page.goto("https://www.aliexpress.com/p/order/detail.html?orderId=" + i)
-        container = page.locator(
-            "div.order-detail-info-item.order-detail-order-info "
-            "> div.order-detail-info-content.has-switch.expand-info"
-        )
-        divs = container.locator("> div")
+    with alive_bar(len(ref)) as bar:
+        for i in ref:
+            page.goto("https://www.aliexpress.com/p/order/detail.html?orderId=" + i)
+            container = page.locator(
+                "div.order-detail-info-item.order-detail-order-info "
+                "> div.order-detail-info-content.has-switch.expand-info"
+            )
+            divs = container.locator("> div")
 
-        texts = []
-        for i in range(1, 5):
-            div = divs.nth(i)
-            span_count = div.locator("span").count()
-            full_text = div.inner_text()
-            if span_count > 0:
-                span_text = div.locator("span").first.inner_text()
-                text_only = full_text.replace(span_text, "").strip()
-            else:
-                text_only = full_text.strip()
-            texts.append(text_only)
-        paid_on.append(texts[1])
-        shipment_completed.append(texts[2])
-        order_completed.append(texts[3])
+            texts = []
+            for i in range(1, 5):
+                div = divs.nth(i)
+                span_count = div.locator("span").count()
+                full_text = div.inner_text()
+                if span_count > 0:
+                    span_text = div.locator("span").first.inner_text()
+                    text_only = full_text.replace(span_text, "").strip()
+                else:
+                    text_only = full_text.strip()
+                texts.append(text_only)
+            paid_on.append(texts[1])
+            shipment_completed.append(texts[2])
+            order_completed.append(texts[3])
+            bar()
 
     for i in sorted(
         [i for i, val in enumerate(order_completed) if val == "PayPal"], reverse=True
@@ -46,11 +50,13 @@ def fetch_shipment(context, ref):
         del order_completed[i]
         del ref[i]
 
-    paid_on_dt = [datetime.strptime(d, "%b %d, %Y") for d in paid_on]  # noqa: DTZ007
+    paid_on_dt = [datetime.strptime(d, "%b %d, %Y").astimezone() for d in paid_on]
     shipment_completed_dt = [
-        datetime.strptime(d, "%b %d, %Y") for d in shipment_completed
-    ]  # noqa: DTZ007
-    order_completed_dt = [datetime.strptime(d, "%b %d, %Y") for d in order_completed]  # noqa: DTZ007
+        datetime.strptime(d, "%b %d, %Y").astimezone() for d in shipment_completed
+    ]
+    order_completed_dt = [
+        datetime.strptime(d, "%b %d, %Y").astimezone() for d in order_completed
+    ]
 
     combined = list(zip(paid_on_dt, shipment_completed_dt, order_completed_dt))
     seen = set()
@@ -159,48 +165,80 @@ def parse_shippments(browser, context):
             return match.group()
         return None
 
+    def clean_dates(s):
+        match = re.search(r"[A-Za-z]{3} \d{1,2}, \d{4}", s)
+        if match:
+            return datetime.strptime(match.group(), "%b %d, %Y").astimezone()
+        return None
+
+    def get_unit(s):
+        match = re.search(r"[^\d.,\s]+$", s)
+        if match:
+            return match.group()
+        return None
+
     clean_price = [clean_price_list(x) for x in price]
     clean_ref = [clean_ref_number(x) for x in ref]
+    clean_date = [clean_dates(x) for x in date]
+    unit = get_unit(price[0]) if len(price) > 0 else ""
 
-    for i in sorted(
-        [i for i, val in enumerate(clean_price) if val == 0.01], reverse=True
-    ):
-        del status[i]
-        del date[i]
-        del clean_price[i]
-        del clean_ref[i]
+    # Filter out Items
+    # in this case it was to filter out 0.01€ shipping not or somthing
+    # you can filter after date (clean_date), price (clean_price) and the reference number (clean_ref)
+    # you can not filter names!
 
-    if not (len(status) == len(date) == len(clean_price) == len(clean_ref)):
+    # for i in sorted(
+    #     [i for i, val in enumerate(clean_price) if val == 0.01], reverse=True # replace clean_price and 0.01 with your own filter
+    # ):
+    #     del status[i]
+    #     del clean_date[i]
+    #     del clean_price[i]
+    #     del clean_ref[i]
+
+    if not (len(status) == len(clean_date) == len(clean_price) == len(clean_ref)):
         print("Something went wrong while proccesing, aborting")
         context.close()
         browser.close()
         sys.exit()
 
-    print("Fetched ", len(status), " Items")
+    print("Fetched", len(status), "Items")
 
     avg_price = sum(clean_price) / len(clean_price)
     avg_price = round(avg_price, 2)
     min_price = min(clean_price)
     max_price = max(clean_price)
 
-    print(f"Max Price: {max_price}, Min Price: {min_price}, Avg Price: {avg_price}")
-
-    pts, sta = fetch_shipment(context, clean_ref)
-
-    if len(pts) != len(sta):
-        print("ERROR: fetching or proccesing failed!")
-        context.close()
-        browser.close()
-        sys.exit()
-    total_days = [p2s + s2o for p2s, s2o in zip(pts, sta)]
-    avg_time = sum(total_days) / len(total_days)
-    avg_time = round(avg_time, 1)
-    min_time = min(total_days)
-    max_time = max(total_days)
-
     print(
-        f"Max Delivery Time: {max_time} days, Min Delivery Time: {min_time} days, Avg Delivery Time: {avg_time} days"
+        f"Max Price: {max_price}{unit}, Min Price: {min_price}{unit}, Avg Price: {avg_price}{unit}, Total Spending: {sum(clean_price)}{unit}"
     )
+
+    total_price_by_year = {}
+    for year_date, value in zip(clean_date, clean_price):
+        year = year_date.year
+        total_price_by_year[year] = total_price_by_year.get(year, 0) + value
+
+    print("Total Money spent by Year:")
+    for year, total in sorted(total_price_by_year.items()):
+        avg_price_by_year = round(total, 2)
+        print(f"{year}: {avg_price_by_year}{unit}")
+
+    if not args.no_fetch:
+        pts, sta = fetch_shipment(context, clean_ref)
+
+        if len(pts) != len(sta):
+            print("ERROR: fetching or proccesing failed!")
+            context.close()
+            browser.close()
+            sys.exit()
+        total_days = [p2s + s2o for p2s, s2o in zip(pts, sta)]
+        avg_time = sum(total_days) / len(total_days)
+        avg_time = round(avg_time, 1)
+        min_time = min(total_days)
+        max_time = max(total_days)
+
+        print(
+            f"Max Delivery Time: {max_time} days, Min Delivery Time: {min_time} days, Avg Delivery Time: {avg_time} days"
+        )
 
     print("Finished!")
 
@@ -208,35 +246,54 @@ def parse_shippments(browser, context):
     browser.close()
 
 
-if os.path.isfile("cookie.json"):
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(storage_state="cookie.json")
-        parse_shippments(browser, context)
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Parse AliExpress shipments and prices.",
+        epilog="Make sure to have a cookie.json or cookie.txt file in the same directory.",
+    )
+    parser.add_argument(
+        "-n",
+        "--no-fetch",
+        action="store_true",
+        help="Skip fetching shipments and only parse price and timeline.",
+    )
 
-elif os.path.isfile("cookie.txt"):
-    cookies = Netscape2json("cookie.txt")
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        context = browser.new_context()
-        context.add_cookies(cookies)
-        parse_shippments(browser, context)
-else:
-    print("Cookie file not found. Please log in first to create the cookie.json file.")
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        context = browser.new_context()
-        page = context.new_page()
-        page.goto("https://www.aliexpress.com/p/ug-login-page/login.html")
+    args = parser.parse_args()
 
-        save = input("Please log in manually and then press y to continue: ")
+    if os.path.isfile("cookie.json"):
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(storage_state="cookie.json")
+            parse_shippments(browser, context)
 
-        if save.lower() == "y":
-            # Save cookies to a file
-            context.storage_state(path="cookie.json")
+    elif os.path.isfile("cookie.txt") or os.path.isfile("cookies.txt"):
+        if os.path.isfile("cookie.txt"):
+            cookies = Netscape2json("cookie.txt")
+        else:
+            cookies = Netscape2json("cookies.txt")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=False)
+            context = browser.new_context()
+            context.add_cookies(cookies)
+            parse_shippments(browser, context)
+    else:
+        print(
+            "Cookie file not found. Please log in first to create the cookie.json file."
+        )
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=False)
+            context = browser.new_context()
+            page = context.new_page()
+            page.goto("https://www.aliexpress.com/p/ug-login-page/login.html")
 
-            print("Login successful. Cookies saved to cookie.json.")
-            print("You can now run the script again to parse shipments.")
+            save = input("Please log in manually and then press y to continue: ")
 
-            context.close()
-            browser.close()
+            if save.lower() == "y":
+                # Save cookies to a file
+                context.storage_state(path="cookie.json")
+
+                print("Login successful. Cookies saved to cookie.json.")
+                print("You can now run the script again to parse shipments.")
+
+                context.close()
+                browser.close()

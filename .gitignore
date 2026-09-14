@@ -10,5 +10,6 @@ wheels/
 .venv
 
 cookie.txt
+cookies.txt
 state.json
 cookie.json
